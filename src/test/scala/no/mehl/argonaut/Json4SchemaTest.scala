@@ -30,7 +30,7 @@ class Json4SchemaTest extends FunSuite {
   test("Conform to spec") {
     case class MyJsonObject(firstName: String, lastName: String, age: Int)
 
-    val model = Model[MyJsonObject]("Person",
+    val model = Model[MyJsonObject]("Person", "Describes a Person",
       new SchemaEncoder[MyJsonObject](
         Field[MyJsonObject, String]("firstName", _.firstName, "string", true),
         Field[MyJsonObject, String]("lastName", _.lastName, "string", true),
@@ -49,7 +49,7 @@ class Json4SchemaTest extends FunSuite {
 
     println(jsoned)
     assert(model.jsonSchema == Parse.parse(spec).right.get)
-    println(model.jsonSchema)
+    println(model.jsonSchema.toString)
 
     assert (Parse.parse(jsoned.toString).right.get.toString == "{\"firstName\":\"bas\",\"lastName\":\"bar\",\"age\":10}")
   }

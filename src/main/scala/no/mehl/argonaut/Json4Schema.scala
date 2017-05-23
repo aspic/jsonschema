@@ -22,17 +22,22 @@ case class SchemaEncoder[T](fields: Field[T, _]*) extends EncodeJson[T] {
   )
 }
 
-case class Model[T](title: String, encoder: SchemaEncoder[T], decoder: HCursor => DecodeResult[T]) {
+trait Json4Schema {
+  def jsonSchema: Json
+}
+
+case class Model[T](title: String, description: String, encoder: SchemaEncoder[T], decoder: HCursor => DecodeResult[T]) extends Json4Schema {
 
   def codec: CodecJson[T] = CodecJson(
     encoder.encode,
     decoder
   )
 
-  def jsonSchema = Json.obj(
-    "title" := title,
-    "type" := "object",
-    "properties" := Json.obj(encoder.fields.map(_.asSchema) : _*),
-    "required" := Json.array(encoder.fields.filter(_.required).map(s => jString(s.name)) : _*)
-  )
+  def jsonSchema = jEmptyObject
+      .->:("$schema" := "http://json-schema.org/draft-04/schema#")
+      .->:("title" := title)
+      .->:("description" := description)
+      .->:("type" := "object")
+      .->:("properties" := Json.obj(encoder.fields.map(_.asSchema): _*))
+      .->:("required" := Json.array(encoder.fields.filter(_.required).map(s => jString(s.name)) : _*))
 }
