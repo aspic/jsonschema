@@ -1,21 +1,55 @@
 package no.mehl.argonaut
 
+import java.time.LocalDate
+
 import argonaut.Argonaut.JsonField
-import argonaut.{CodecJson, DecodeResult, HCursor, Json}
-import argonaut._
+import argonaut.{Argonaut, CodecJson, DecodeResult, HCursor, Json, _}
 import Argonaut._
 import no.mehl.argonaut.TypeOps.typed
 
-case class Field[M : EncodeJson](name: String, value: M, description: Option[String] = None, minimum: Option[Int] = None) {
+trait Schematic[T] {
+  def asSchema(name: String, value: T, description: Option[String]): (JsonField, Json) = {
+    name := fields(name, value, description)
+  }
+
+  def fields(name: String, value: T, description: Option[String]) = {
+      val json = jEmptyObject
+        .->?:(description.map("description" := _))
+        .->:("type" := typed(value))
+      props.foldLeft(json)((f, json) => {
+        f.->:(json)
+      })
+  }
+
+  val props: List[(JsonField, Json)] = List()
+}
+
+object implicits {
+
+  implicit def modelSchematic[F](implicit ev: Model[F]) = new Schematic[F] {
+    override def fields(name: String, value: F, description: Option[String]): Json = ev.jsonSchema
+  }
+
+  implicit val stringSchematic = new Schematic[String]{}
+
+  implicit val intSchematic = new Schematic[Int] {
+    override val props = List(
+      "minimum" := 0
+    )
+  }
+
+  implicit def optionSchematic[F](implicit ev: Schematic[F]) = new Schematic[Option[F]] {
+    override val props  = ev.props
+  }
+
+  implicit val localDate = new Schematic[LocalDate] {}
+}
+
+case class Field[M : EncodeJson](name: String, value: M, description: Option[String] = None)(implicit enc: Schematic[M]) {
 
   def asField: (JsonField, Json) = name := value
 
-  def asSchema: (JsonField, Json) = {
-    name := jEmptyObject
-      .->?:(description.map("description" := _))
-      .->:("type" := typed(value))
-      .->?:(minimum.map("minimum" := _))
-  }
+  def asSchema: (JsonField, Json) = enc.asSchema(name, value, description)
 
   val isRequired = value match {
     case _: Option[_] => false
@@ -48,9 +82,7 @@ case class Model[T](title: String, description: Option[String] = None, example: 
       .->:("title" := title)
       .->?:(description.map("description" := _))
       .->:("type" := "object")
-      .->:("properties" := Json.obj(jsonEncoder.fields.map(f => {
-        f.asSchema
-      }): _*))
+      .->:("properties" := Json.obj(jsonEncoder.fields.map(_.asSchema): _*))
       .->:("required" := Json.array(jsonEncoder.fields.filter(_.isRequired).map(s => jString(s.name)) : _*))
 
   def jsonExample = codec.Encoder(example)
@@ -63,7 +95,7 @@ object TypeOps {
     case _: String => Some("string")
     case _: Int => Some("integer")
     case Some(o) => typed(o)
-    case _ => Some("not implemented")
+    case _ => Some("string") // TODO: Ok fallback?
   }
 
 
