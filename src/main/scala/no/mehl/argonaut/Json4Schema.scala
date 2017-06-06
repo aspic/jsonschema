@@ -26,7 +26,7 @@ trait Json4Schema {
   def jsonSchema: Json
 }
 
-case class Model[T](title: String, description: String, encoder: SchemaEncoder[T], decoder: HCursor => DecodeResult[T]) extends Json4Schema {
+case class Model[T](title: String, description: Option[String] = None, encoder: SchemaEncoder[T], decoder: HCursor => DecodeResult[T]) extends Json4Schema {
 
   def codec: CodecJson[T] = CodecJson(
     encoder.encode,
@@ -36,7 +36,7 @@ case class Model[T](title: String, description: String, encoder: SchemaEncoder[T
   def jsonSchema = jEmptyObject
       .->:("$schema" := "http://json-schema.org/draft-04/schema#")
       .->:("title" := title)
-      .->:("description" := description)
+      .->?:(description.map("description" := _))
       .->:("type" := "object")
       .->:("properties" := Json.obj(encoder.fields.map(_.asSchema): _*))
       .->:("required" := Json.array(encoder.fields.filter(_.required).map(s => jString(s.name)) : _*))

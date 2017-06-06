@@ -1,5 +1,7 @@
 package no.mehl.argonaut
 
+import argonaut.Argonaut
+import argonaut.Json.JsonAssoc
 import org.scalatest.FunSuite
 
 class Json4SchemaTest extends FunSuite {
@@ -9,7 +11,9 @@ class Json4SchemaTest extends FunSuite {
 
   // http://json-schema.org/examples.html
   val spec = """{
+               |    "$schema":"http://json-schema.org/draft-04/schema#",
                |    "title": "Person",
+               |    "description": "Describes a Person",
                |    "type": "object",
                |    "properties": {
                |        "firstName": {
@@ -27,30 +31,40 @@ class Json4SchemaTest extends FunSuite {
                |    "required": ["firstName", "lastName"]
                |}""".stripMargin
 
-  test("Conform to spec") {
-    case class MyJsonObject(firstName: String, lastName: String, age: Int)
+  implicit class JsonAssocOps(a: JsonAssoc) {
 
-    val model = Model[MyJsonObject]("Person", "Describes a Person",
-      new SchemaEncoder[MyJsonObject](
-        Field[MyJsonObject, String]("firstName", _.firstName, "string", true),
-        Field[MyJsonObject, String]("lastName", _.lastName, "string", true),
-        Field[MyJsonObject, Int]("age", _.age, "integer", false, Some("Age in years"), Some(0))
+  }
+
+  case class Schema(j: Json, a: JsonAssoc, title: String, description: Option[String] = None, minimum: Option[Int] = None) {
+    def schema(): (JsonField, Json) = {
+      title := jEmptyObject
+        .->?:(description.map("description" := _))
+        .->:("type" := a._2.name)
+        .->?:(minimum.map("minimum" := _))
+    }
+  }
+
+  test("Conform to spec") {
+    case class PersonObject(firstName: String, lastName: String, age: Int, tags: List[String])
+
+    val model: Model[PersonObject] = Model("Person", Some("Describes a Person"),
+      SchemaEncoder(
+        Field[PersonObject, String]("firstName", _.firstName, "string", true),
+        Field[PersonObject, String]("lastName", _.lastName, "string", true),
+        Field[PersonObject, Int]("age", _.age, "integer", false, Some("Age in years"), Some(0))
       ),
       c => for {
         firstName <- (c --\ "firstName").as[String]
         lastName  <- (c --\ "lastName").as[String]
         age       <- (c --\ "age").as[Int]
-      } yield MyJsonObject(firstName, lastName, age)
+      } yield PersonObject(firstName, lastName, age, List.empty)
     )
 
     implicit val codec = model.codec
 
-    val jsoned = MyJsonObject("bas", "bar", 10).asJson
+    val jsoned = PersonObject("bas", "bar", 10, List("foo", "bar")).asJson
 
-    println(jsoned)
-    assert(model.jsonSchema == Parse.parse(spec).right.get)
-    println(model.jsonSchema.toString)
-
+    assert(model.jsonSchema.pretty(PrettyParams.spaces2) == Parse.parse(spec).right.get.pretty(PrettyParams.spaces2))
     assert (Parse.parse(jsoned.toString).right.get.toString == "{\"firstName\":\"bas\",\"lastName\":\"bar\",\"age\":10}")
   }
 
