@@ -80,7 +80,7 @@ class Json4SchemaTest extends FunSuite {
       } yield LocalDate.parse(date)
     )
 
-    val addressModel: Model[Address] = Model("Address", Some("Describes an address"), exampleAddress,
+    implicit val addressModel: Model[Address] = Model("Address", Some("Describes an address"), exampleAddress,
       o => {
         SchemaEncoder(
           Field("street", o.street),
@@ -97,7 +97,6 @@ class Json4SchemaTest extends FunSuite {
     } yield Address(street, city, state, country))
 
     implicit val addressCodec = addressModel.codec
-    implicit val add = addressModel
 
     val personModel: Model[Person] = Model("Person", Some("Describes a Person"), examplePerson,
       o => {
@@ -117,7 +116,7 @@ class Json4SchemaTest extends FunSuite {
     )
 
     implicit val personCodec = personModel.codec
-    println(personModel.jsonSchema.toString)
+    println(personModel.encoder(Person("foo", "bar", LocalDate.now(), exampleAddress)).toString)
     println(examplePerson.asJson)
 
   }
