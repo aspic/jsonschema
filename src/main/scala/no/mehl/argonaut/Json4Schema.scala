@@ -20,7 +20,7 @@ trait SchemaDef[T] {
     })
   }
   val isDefinition = false
-  val isRequired = true
+  val isRequired   = true
 
   val schemaType: String
 
@@ -53,14 +53,14 @@ object schemaImplicits {
   implicit val stringSchemaDef = new StringSchemaDef[String] {}
 
   implicit def optionSchemaDef[F](implicit ev: SchemaDef[F]) = new SchemaDef[Option[F]] {
-    override val props              = ev.props
-    override val schemaType: String = ev.schemaType
+    override val props               = ev.props
+    override val schemaType: String  = ev.schemaType
     override val isRequired: Boolean = false
   }
 }
 
 case class Field[F, M: EncodeJson](name: String, f: F => M, description: Option[String] = None)(
-  implicit enc: SchemaDef[M]) {
+    implicit enc: SchemaDef[M]) {
 
   def asField(provided: F): (JsonField, Json) = name := f(provided)
 
@@ -93,7 +93,7 @@ case class SchemaEncoder[T](fields: Field[T, _]*) {
   )
 }
 
-case class SchemaDecoder[T](fields: List[FieldTo[_]], decoder: HCursor => DecodeResult[T])
+case class SchemaDecoder[T](decoder: HCursor => DecodeResult[T], fields: FieldTo[_]*)
 
 trait Json4Schema {
   def jsonSchema: Json
@@ -102,16 +102,16 @@ trait Json4Schema {
 case class Model[T](title: String,
                     description: Option[String] = None,
                     example: Option[T] = None,
-                    encoder: SchemaEncoder[T],
+                    encoder: T => Json,
                     decoder: SchemaDecoder[T])
     extends Json4Schema {
 
   val codec: CodecJson[T] = CodecJson(
-    encoder.encode,
+    encoder,
     decoder.decoder
   )
 
-  def toDefinition(schemaEncoder: SchemaEncoder[T]): Option[Json] = {
+  def toDefinition(schemaEncoder: SchemaDecoder[T]): Option[Json] = {
     val definitions = schemaEncoder.fields.filter(_.isDefinition)
     if (definitions.isEmpty) None
     else Some(Json.obj(definitions.map(_.asSchema): _*))
@@ -123,14 +123,14 @@ case class Model[T](title: String,
       .->:("title" := title)
       .->?:(description.map("description" := _))
       .->:("type" := "object")
-      .->?:(toDefinition(encoder).map("definitions" := _))
+      .->?:(toDefinition(decoder).map("definitions" := _))
       .->:("properties" := Json.obj(decoder.fields.map(f => {
         if (f.isDefinition) f.field := jEmptyObject.->:("$ref" := s"#/definitions/${f.field}")
         else f.asSchema
       }): _*))
       .->:("required" := Json.array(decoder.fields.filter(_.isRequired).map(s => jString(s.field)): _*))
 
-  def jsonExample: Option[Json] = example.map(encoder.encode)
+  def jsonExample: Option[Json] = example.map(encoder)
 }
 
 object TypeOps {

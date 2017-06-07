@@ -91,64 +91,68 @@ class Json4SchemaTest extends FunSuite {
         } yield LocalDate.parse(date)
     )
 
-    /**
     implicit val addressModel: Model[Address] = Model(
       "Address",
       Some("Describes an address"),
       Some(exampleAddress),
-      SchemaEncoder(
-        Field("street", _.street),
-        Field("city", _.city),
-        Field("state", _.state),
-        Field("country", _.state)
+      o =>
+        Json.obj(
+          "street" := o.street,
+          "city" := o.city,
+          "state" := o.state,
+          "country" := o.country
       ),
-      c =>
-        for {
-          street  <- (c --\ "street").as[String]
-          city    <- (c --\ "city").as[String]
-          state   <- (c --\ "state").as[String]
-          country <- (c --\ "country").as[String]
-        } yield Address(street, city, state, country)
+      {
+        val street = FieldTo[String]("street")
+        val city  = FieldTo[String]("city")
+        val state  = FieldTo[String]("state")
+        val country   = FieldTo[String]("country")
+        SchemaDecoder(
+        c => for {
+          street  <- street(c)
+          city    <- city(c)
+          state   <- state(c)
+          country <- country(c)
+        } yield Address(street, city, state, country), street, city, state, country)
+      }
     )
 
-       implicit val addressCodec = addressModel.codec
-      */
+    implicit val addressCodec       = addressModel.codec
     implicit val localDateSchemaDef = new StringSchemaDef[LocalDate] {}
-    implicit val foo                = new StringSchemaDef[Address]   {}
-    implicit val codec: CodecJson[Address] = CodecJson(
-      e => jEmptyObject,
-      c => DecodeResult.ok(Address("fpp", "bar", "bas", "barbar"))
-    )
 
     val personModel: Model[Person] = Model(
       "Person",
       Some("Describes a Person"),
       Some(examplePerson),
-      SchemaEncoder(
-        Field("first_name", _.name),
-        Field("last_name", _.surname),
-        Field("birthday", _.birthday),
-        Field("address", _.address)
+      o =>
+        Json.obj(
+          "first_name" := o.name,
+          "last_name" := o.surname,
+          "birthday" := o.birthday,
+          "address" := o.address
       ), {
         val firstName = FieldTo[Option[String]]("first_name")
         val lastName  = FieldTo[String]("last_name")
         val birthDay  = FieldTo[LocalDate]("birthday")
         val address   = FieldTo[Address]("address")
         SchemaDecoder(
-          List(firstName, lastName, birthDay, address),
           c =>
             for {
               firstName <- firstName(c)
               lastName  <- lastName(c)
               birthday  <- birthDay(c)
               address   <- address(c)
-            } yield Person(firstName.get, lastName, birthday, address)
+            } yield Person(firstName.get, lastName, birthday, address),
+          firstName,
+          lastName,
+          birthDay,
+          address
         )
       }
     )
 
     implicit val personCodec = personModel.codec
-    println(personModel.encoder.encode(Person("foo", "bar", LocalDate.now(), exampleAddress)).toString)
+    println(personModel.encoder(Person("foo", "bar", LocalDate.now(), exampleAddress)).toString)
 
     println(personModel.jsonSchema)
     println(examplePerson.asJson)
