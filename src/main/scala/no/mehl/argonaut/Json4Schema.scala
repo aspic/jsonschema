@@ -5,9 +5,8 @@ import java.time.LocalDate
 import argonaut.Argonaut.JsonField
 import argonaut.{Argonaut, CodecJson, DecodeResult, HCursor, Json, _}
 import Argonaut._
-import no.mehl.argonaut.TypeOps.typed
 
-trait Schematic[T] {
+trait SchemaDef[T] {
   def asSchema(name: String, description: Option[String]): (JsonField, Json) = {
     name := fields(name, description)
   }
@@ -21,68 +20,80 @@ trait Schematic[T] {
     })
   }
   val isDefinition = false
+  val isRequired = true
+
   val schemaType: String
 
   val props: List[(JsonField, Json)] = List()
 }
 
-object implicits {
+object schemaImplicits {
 
-  implicit def modelSchematic[F](implicit ev: Model[F]) = new Schematic[F] {
+  trait IntSchemaDef extends SchemaDef[Int] {
+    override val schemaType: String = "integer"
+  }
+
+  trait StringSchemaDef[T] extends SchemaDef[T] {
+    override val schemaType: String = "string"
+  }
+
+  implicit def modelSchemaDef[F](implicit ev: Model[F]) = new SchemaDef[F] {
     override val isDefinition: Boolean                                   = true
     override def fields(name: String, description: Option[String]): Json = ev.jsonSchema
 
     override val schemaType: String = "object"
   }
 
-  implicit val stringSchematic = new Schematic[String] {
-    override val schemaType: String = "string"
+  trait MinimumDef {
+    val minimum: Int
+    val minProps = List("minimum" := minimum)
   }
 
-  implicit val intSchematic = new Schematic[Int] {
-    override val props = List(
-      "minimum" := 0
-    )
-    override val schemaType: String = "integer"
-  }
+  implicit val intSchemaDef    = new IntSchemaDef            {}
+  implicit val stringSchemaDef = new StringSchemaDef[String] {}
 
-  implicit def optionSchematic[F](implicit ev: Schematic[F]) = new Schematic[Option[F]] {
+  implicit def optionSchemaDef[F](implicit ev: SchemaDef[F]) = new SchemaDef[Option[F]] {
     override val props              = ev.props
     override val schemaType: String = ev.schemaType
+    override val isRequired: Boolean = false
   }
-
-  implicit val localDate = new Schematic[LocalDate] {
-    override val schemaType: String = "string"
-  }
-
 }
 
-case class Field[F, M: EncodeJson](name: String, value: F => M, description: Option[String] = None)(
-    implicit enc: Schematic[M]) {
+case class Field[F, M: EncodeJson](name: String, f: F => M, description: Option[String] = None)(
+  implicit enc: SchemaDef[M]) {
 
-  def asField(foo: F): (JsonField, Json) = name := value(foo)
+  def asField(provided: F): (JsonField, Json) = name := f(provided)
 
   def asSchema: (JsonField, Json) = enc.asSchema(name, description)
 
   val isDefinition = enc.isDefinition
 
-  val isRequired = value match {
+  val isRequired = f match {
     case _: Option[_] => false
     case _            => true
   }
-
 }
 
-/**
-case class ObjectEncoder(fields: List[Field[_]] = List()) {
-  def ->: (field: Field[_]) = ObjectEncoder(fields :+ field)
+case class FieldTo[M: DecodeJson](field: String, description: Option[String] = None)(implicit schemaDef: SchemaDef[M]) {
+
+  val isDefinition = schemaDef.isDefinition
+
+  val isRequired = schemaDef.isRequired
+
+  def asSchema: (JsonField, Json) = schemaDef.asSchema(field, description)
+
+  def apply(c: HCursor) = {
+    (c --\ field).as[M]
+  }
 }
-  */
+
 case class SchemaEncoder[T](fields: Field[T, _]*) {
   def encode(a: T): Json = Json.obj(
     fields.map(f => f.asField(a)): _*
   )
 }
+
+case class SchemaDecoder[T](fields: List[FieldTo[_]], decoder: HCursor => DecodeResult[T])
 
 trait Json4Schema {
   def jsonSchema: Json
@@ -92,12 +103,12 @@ case class Model[T](title: String,
                     description: Option[String] = None,
                     example: Option[T] = None,
                     encoder: SchemaEncoder[T],
-                    decoder: HCursor => DecodeResult[T])
+                    decoder: SchemaDecoder[T])
     extends Json4Schema {
 
   val codec: CodecJson[T] = CodecJson(
     encoder.encode,
-    decoder
+    decoder.decoder
   )
 
   def toDefinition(schemaEncoder: SchemaEncoder[T]): Option[Json] = {
@@ -113,11 +124,11 @@ case class Model[T](title: String,
       .->?:(description.map("description" := _))
       .->:("type" := "object")
       .->?:(toDefinition(encoder).map("definitions" := _))
-      .->:("properties" := Json.obj(encoder.fields.map(f => {
-        if (f.isDefinition) f.name := jEmptyObject.->:("$ref" := s"#/definitions/${f.name}")
+      .->:("properties" := Json.obj(decoder.fields.map(f => {
+        if (f.isDefinition) f.field := jEmptyObject.->:("$ref" := s"#/definitions/${f.field}")
         else f.asSchema
       }): _*))
-      .->:("required" := Json.array(encoder.fields.filter(_.isRequired).map(s => jString(s.name)): _*))
+      .->:("required" := Json.array(decoder.fields.filter(_.isRequired).map(s => jString(s.field)): _*))
 
   def jsonExample: Option[Json] = example.map(encoder.encode)
 }

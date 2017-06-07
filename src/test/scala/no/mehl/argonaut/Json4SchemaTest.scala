@@ -31,11 +31,18 @@ class Json4SchemaTest extends FunSuite {
                |    "required": ["firstName", "lastName"]
                |}""".stripMargin
 
+  /**
   test("Conform to spec, and decode instance") {
     case class PersonObject(firstName: String, lastName: String, age: Option[Int])
 
     val example = PersonObject("John", "Doe", Some(42))
-    import implicits._
+
+    import schemaImplicits._
+
+    implicit val intSchemaDef = new IntSchemaDef with MinimumDef {
+      override val props = List() ++ minProps
+      override val minimum: Int = 0
+    }
 
     val personModel: Model[PersonObject] = Model(
       "Person",
@@ -59,13 +66,14 @@ class Json4SchemaTest extends FunSuite {
     val asJson = example.asJson
 
     println(personModel.jsonSchema)
+    println(example.asJson)
 
     assert(
       personModel.jsonSchema.pretty(PrettyParams.spaces2) == Parse.parse(spec).right.get.pretty(PrettyParams.spaces2))
     assert(
       Parse.parse(asJson.toString).right.get.toString == "{\"firstName\":\"John\",\"lastName\":\"Doe\",\"age\":42}")
   }
-
+    */
   test("Composed object") {
     case class Person(name: String, surname: String, birthday: LocalDate, address: Address)
     case class Address(street: String, city: String, state: String, country: String)
@@ -73,7 +81,7 @@ class Json4SchemaTest extends FunSuite {
     val exampleAddress = Address("3200 Mount Vernon Memorial Highway", "Mount Vernon", "Virginia", "United States")
     val examplePerson  = Person("John", "Doe", LocalDate.now(), exampleAddress)
 
-    import implicits._
+    import schemaImplicits._
 
     implicit val localdateCodec: CodecJson[LocalDate] = CodecJson(
       d => jString(d.toString),
@@ -83,6 +91,7 @@ class Json4SchemaTest extends FunSuite {
         } yield LocalDate.parse(date)
     )
 
+    /**
     implicit val addressModel: Model[Address] = Model(
       "Address",
       Some("Describes an address"),
@@ -102,7 +111,14 @@ class Json4SchemaTest extends FunSuite {
         } yield Address(street, city, state, country)
     )
 
-    implicit val addressCodec = addressModel.codec
+       implicit val addressCodec = addressModel.codec
+      */
+    implicit val localDateSchemaDef = new StringSchemaDef[LocalDate] {}
+    implicit val foo                = new StringSchemaDef[Address]   {}
+    implicit val codec: CodecJson[Address] = CodecJson(
+      e => jEmptyObject,
+      c => DecodeResult.ok(Address("fpp", "bar", "bas", "barbar"))
+    )
 
     val personModel: Model[Person] = Model(
       "Person",
@@ -113,14 +129,22 @@ class Json4SchemaTest extends FunSuite {
         Field("last_name", _.surname),
         Field("birthday", _.birthday),
         Field("address", _.address)
-      ),
-      c =>
-        for {
-          firstName <- (c --\ "firstName").as[String]
-          lastName  <- (c --\ "lastName").as[String]
-          birthday  <- (c --\ "age").as[LocalDate]
-          address   <- (c --\ "address").as[Address]
-        } yield Person(firstName, lastName, birthday, address)
+      ), {
+        val firstName = FieldTo[Option[String]]("first_name")
+        val lastName  = FieldTo[String]("last_name")
+        val birthDay  = FieldTo[LocalDate]("birthday")
+        val address   = FieldTo[Address]("address")
+        SchemaDecoder(
+          List(firstName, lastName, birthDay, address),
+          c =>
+            for {
+              firstName <- firstName(c)
+              lastName  <- lastName(c)
+              birthday  <- birthDay(c)
+              address   <- address(c)
+            } yield Person(firstName.get, lastName, birthday, address)
+        )
+      }
     )
 
     implicit val personCodec = personModel.codec
@@ -128,7 +152,11 @@ class Json4SchemaTest extends FunSuite {
 
     println(personModel.jsonSchema)
     println(examplePerson.asJson)
+    val json = examplePerson.asJson
+    println(json)
 
+    println(personModel.codec.decodeJson(json).toOption.get)
+    println(personModel.jsonSchema)
 
   }
 
