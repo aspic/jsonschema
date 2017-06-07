@@ -101,26 +101,29 @@ class Json4SchemaTest extends FunSuite {
           "city" := o.city,
           "state" := o.state,
           "country" := o.country
-      ),
-      {
-        val street = FieldTo[String]("street")
-        val city  = FieldTo[String]("city")
-        val state  = FieldTo[String]("state")
-        val country   = FieldTo[String]("country")
-        SchemaDecoder(
-        c => for {
-          street  <- street(c)
-          city    <- city(c)
-          state   <- state(c)
-          country <- country(c)
-        } yield Address(street, city, state, country), street, city, state, country)
+      ), {
+        val street  = Field[String]("street")
+        val city    = Field[String]("city")
+        val state   = Field[String]("state")
+        val country = Field[String]("country")
+        SchemaDecoder(c =>
+                        for {
+                          street  <- street(c)
+                          city    <- city(c)
+                          state   <- state(c)
+                          country <- country(c)
+                        } yield Address(street, city, state, country),
+                      street,
+                      city,
+                      state,
+                      country)
       }
     )
 
     implicit val addressCodec       = addressModel.codec
     implicit val localDateSchemaDef = new StringSchemaDef[LocalDate] {}
 
-    val personModel: Model[Person] = Model(
+    implicit val personModel: Model[Person] = Model(
       "Person",
       Some("Describes a Person"),
       Some(examplePerson),
@@ -131,10 +134,10 @@ class Json4SchemaTest extends FunSuite {
           "birthday" := o.birthday,
           "address" := o.address
       ), {
-        val firstName = FieldTo[Option[String]]("first_name")
-        val lastName  = FieldTo[String]("last_name")
-        val birthDay  = FieldTo[LocalDate]("birthday")
-        val address   = FieldTo[Address]("address")
+        val firstName = Field[String]("first_name")
+        val lastName  = Field[String]("last_name")
+        val birthDay  = Field[LocalDate]("birthday")
+        val address   = Field[Address]("address")
         SchemaDecoder(
           c =>
             for {
@@ -142,7 +145,7 @@ class Json4SchemaTest extends FunSuite {
               lastName  <- lastName(c)
               birthday  <- birthDay(c)
               address   <- address(c)
-            } yield Person(firstName.get, lastName, birthday, address),
+            } yield Person(firstName, lastName, birthday, address),
           firstName,
           lastName,
           birthDay,
@@ -161,6 +164,18 @@ class Json4SchemaTest extends FunSuite {
 
     println(personModel.codec.decodeJson(json).toOption.get)
     println(personModel.jsonSchema)
+
+    case class Foo(p: Person)
+
+    val foo = new Model[Foo]("Foo", None, None, e => Json.obj("person" := e.p), {
+      val f = Field[Person]("person")
+      SchemaDecoder(c => for {
+       p <- f(c)
+      }
+      yield Foo(p), f)
+    })
+
+    println(foo.jsonSchema)
 
   }
 

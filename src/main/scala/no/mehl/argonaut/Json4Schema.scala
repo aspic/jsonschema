@@ -1,7 +1,5 @@
 package no.mehl.argonaut
 
-import java.time.LocalDate
-
 import argonaut.Argonaut.JsonField
 import argonaut.{Argonaut, CodecJson, DecodeResult, HCursor, Json, _}
 import Argonaut._
@@ -59,22 +57,7 @@ object schemaImplicits {
   }
 }
 
-case class Field[F, M: EncodeJson](name: String, f: F => M, description: Option[String] = None)(
-    implicit enc: SchemaDef[M]) {
-
-  def asField(provided: F): (JsonField, Json) = name := f(provided)
-
-  def asSchema: (JsonField, Json) = enc.asSchema(name, description)
-
-  val isDefinition = enc.isDefinition
-
-  val isRequired = f match {
-    case _: Option[_] => false
-    case _            => true
-  }
-}
-
-case class FieldTo[M: DecodeJson](field: String, description: Option[String] = None)(implicit schemaDef: SchemaDef[M]) {
+case class Field[M: DecodeJson](field: String, description: Option[String] = None)(implicit schemaDef: SchemaDef[M]) {
 
   val isDefinition = schemaDef.isDefinition
 
@@ -87,13 +70,7 @@ case class FieldTo[M: DecodeJson](field: String, description: Option[String] = N
   }
 }
 
-case class SchemaEncoder[T](fields: Field[T, _]*) {
-  def encode(a: T): Json = Json.obj(
-    fields.map(f => f.asField(a)): _*
-  )
-}
-
-case class SchemaDecoder[T](decoder: HCursor => DecodeResult[T], fields: FieldTo[_]*)
+case class SchemaDecoder[T](decoder: HCursor => DecodeResult[T], fields: Field[_]*)
 
 trait Json4Schema {
   def jsonSchema: Json
@@ -131,18 +108,4 @@ case class Model[T](title: String,
       .->:("required" := Json.array(decoder.fields.filter(_.isRequired).map(s => jString(s.field)): _*))
 
   def jsonExample: Option[Json] = example.map(encoder)
-}
-
-object TypeOps {
-
-  // array, boolean, integer, null, number, object, string
-
-  // TODO: Smarter
-  def typed[T](t: T): Option[String] = t match {
-    case _: String => Some("string")
-    case _: Int    => Some("integer")
-    case Some(o)   => typed(o)
-    case _         => Some("string") // TODO: Ok fallback?
-  }
-
 }
