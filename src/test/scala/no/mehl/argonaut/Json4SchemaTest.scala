@@ -31,7 +31,6 @@ class Json4SchemaTest extends FunSuite {
                |    "required": ["firstName", "lastName"]
                |}""".stripMargin
 
-  /**
   test("Conform to spec, and decode instance") {
     case class PersonObject(firstName: String, lastName: String, age: Option[Int])
 
@@ -40,25 +39,36 @@ class Json4SchemaTest extends FunSuite {
     import schemaImplicits._
 
     implicit val intSchemaDef = new IntSchemaDef with MinimumDef {
-      override val props = List() ++ minProps
+      override val props        = List() ++ minProps
       override val minimum: Int = 0
     }
+
+    val firstName = Field[String]("firstName")
+    val lastName  = Field[String]("lastName")
+    val age       = Field[Option[Int]]("age", Some("Age in years"))
 
     val personModel: Model[PersonObject] = Model(
       "Person",
       Some("Describes a Person"),
       Some(example),
-      SchemaEncoder(
-        Field("firstName", _.firstName),
-        Field("lastName", _.lastName),
-        Field("age", _.age, Some("Age in years"))
-      ),
-      c =>
-        for {
-          firstName <- (c --\ "firstName").as[String]
-          lastName  <- (c --\ "lastName").as[String]
-          age       <- (c --\ "age").as[Option[Int]]
-        } yield PersonObject(firstName, lastName, age)
+      o =>
+        Json.obj(
+          firstName(o.firstName),
+          lastName(o.lastName),
+          age(o.age)
+      ), {
+        SchemaDecoder(
+          c =>
+            for {
+              first <- firstName(c)
+              last  <- lastName(c)
+              age   <- age(c)
+            } yield PersonObject(first, last, age),
+          firstName,
+          lastName,
+          age
+        )
+      }
     )
 
     implicit val codec = personModel.codec
@@ -73,7 +83,7 @@ class Json4SchemaTest extends FunSuite {
     assert(
       Parse.parse(asJson.toString).right.get.toString == "{\"firstName\":\"John\",\"lastName\":\"Doe\",\"age\":42}")
   }
-    */
+
   test("Composed object") {
     case class Person(name: String, surname: String, birthday: LocalDate, address: Address)
     case class Address(street: String, city: String, state: String, country: String)
@@ -146,7 +156,10 @@ class Json4SchemaTest extends FunSuite {
               birthday  <- birthDay(c)
               address   <- address(c)
             } yield Person(firstName, lastName, birthday, address),
-          firstName, lastName, birthDay, address
+          firstName,
+          lastName,
+          birthDay,
+          address
         )
       }
     )
@@ -166,10 +179,11 @@ class Json4SchemaTest extends FunSuite {
 
     val foo = new Model[Foo]("Foo", None, None, e => Json.obj("person" := e.p), {
       val f = Field[Person]("person")
-      SchemaDecoder(c => for {
-       p <- f(c)
-      }
-      yield Foo(p), f)
+      SchemaDecoder(c =>
+                      for {
+                        p <- f(c)
+                      } yield Foo(p),
+                    f)
     })
 
     implicit val fooCodec = foo.codec
@@ -177,6 +191,31 @@ class Json4SchemaTest extends FunSuite {
     println(foo.jsonSchema)
     println(Foo(examplePerson).asJson)
 
+  }
+
+  test("oneOf") {
+    import schemaImplicits._
+
+    case class Person(name: String, gender: String)
+
+    val personModel = Model[Person](
+      "Person",
+      Some("Some person"),
+      None,
+      p => casecodec2(Person.apply, Person.unapply)("name", "gender").Encoder(p), {
+        val name   = Field[String]("name")
+        val gender = Field[String]("gender", None, Set("male", "female"))
+        SchemaDecoder(c =>
+                        for {
+                          name   <- name(c)
+                          gender <- gender(c)
+                        } yield Person(name, gender),
+                      name,
+                      gender)
+      }
+    )
+
+    assert(personModel.jsonSchema.toString === "{\"description\":\"Some person\",\"properties\":{\"name\":{\"type\":\"string\"},\"gender\":{\"type\":\"string\",\"enum\":[\"male\",\"female\"]}},\"title\":\"Person\",\"type\":\"object\",\"required\":[\"name\",\"gender\"],\"$schema\":\"http://json-schema.org/draft-04/schema#\"}")
   }
 
 }

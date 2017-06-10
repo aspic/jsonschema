@@ -6,15 +6,16 @@ import Argonaut._
 import no.mehl.argonaut.schemaImplicits.ModelSchemaDef
 
 trait SchemaDef[T] {
-  def asSchema(name: String, description: Option[String]): (JsonField, Json) = {
-    name := fields(name, description)
+  def asSchema(name: String, description: Option[String], enum: Set[String]): (JsonField, Json) = {
+    name := fields(name, description, enum)
   }
 
-  def fields(name: String, description: Option[String]) = {
+  def fields(name: String, description: Option[String], enum: Set[String]) = {
     props.foldLeft(
       jEmptyObject
         .->?:(description.map("description" := _))
         .->:("type" := schemaType)) { case (json, jsonField) => json.->:(jsonField) }
+          .->?:(Some(enum).filter(_.nonEmpty).map(e => "enum" := Json.array(e.toList.map(jString) : _*)))
   }
   val isRequired = true
 
@@ -39,7 +40,7 @@ object schemaImplicits {
   }
 
   implicit def modelSchemaDef[F](implicit ev: Model[F]) = new ModelSchemaDef[F] {
-    override def fields(name: String, description: Option[String]): Json = ev.internalSchema
+    override def fields(name: String, description: Option[String], enum: Set[String]): Json = ev.internalSchema
     val decoder                                                          = ev.decoder
   }
 
@@ -58,24 +59,25 @@ object schemaImplicits {
   }
 }
 
-case class Field[M: DecodeJson](field: String, description: Option[String] = None)(implicit schemaDef: SchemaDef[M]) {
+case class Field[M: DecodeJson](field: String, description: Option[String] = None, enum: Set[String] = Set())(implicit schemaDef: SchemaDef[M]) {
 
   val isRequired = schemaDef.isRequired
 
   val withDef = schemaDef
 
   /** Returns this field as a part of the schema */
-  def toSchema: (JsonField, Json) = schemaDef.asSchema(field, description)
+  def toSchema: (JsonField, Json) = schemaDef.asSchema(field, description, enum)
 
   /** Returns this field as a schema property or definition reference */
   def toProperty: (JsonField, Json) = schemaDef match {
     case _: ModelSchemaDef[_] => field := jEmptyObject.->:("$ref" := s"#/definitions/$field")
-    case _                    => schemaDef.asSchema(field, description)
+    case _                    => schemaDef.asSchema(field, description, enum)
   }
 
-  def apply(c: HCursor) = {
-    (c --\ field).as[M]
-  }
+  def apply(c: ACursor) = c.as[M]
+  def apply(c: HCursor) = (c --\ field).as[M]
+
+  def apply[T: EncodeJson](t: T) = field := t
 }
 
 case class SchemaDecoder[T](decoder: HCursor => DecodeResult[T], fields: Field[_]*)
