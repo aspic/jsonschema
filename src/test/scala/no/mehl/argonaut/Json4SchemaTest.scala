@@ -146,10 +146,7 @@ class Json4SchemaTest extends FunSuite {
               birthday  <- birthDay(c)
               address   <- address(c)
             } yield Person(firstName, lastName, birthday, address),
-          firstName,
-          lastName,
-          birthDay,
-          address
+          firstName, lastName, birthDay, address
         )
       }
     )
@@ -175,7 +172,10 @@ class Json4SchemaTest extends FunSuite {
       yield Foo(p), f)
     })
 
+    implicit val fooCodec = foo.codec
+
     println(foo.jsonSchema)
+    println(Foo(examplePerson).asJson)
 
   }
 

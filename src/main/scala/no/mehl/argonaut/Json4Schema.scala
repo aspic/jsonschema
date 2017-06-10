@@ -3,6 +3,7 @@ package no.mehl.argonaut
 import argonaut.Argonaut.JsonField
 import argonaut.{Argonaut, CodecJson, DecodeResult, HCursor, Json, _}
 import Argonaut._
+import no.mehl.argonaut.schemaImplicits.ModelSchemaDef
 
 trait SchemaDef[T] {
   def asSchema(name: String, description: Option[String]): (JsonField, Json) = {
@@ -35,11 +36,14 @@ object schemaImplicits {
     override val schemaType: String = "string"
   }
 
-  implicit def modelSchemaDef[F](implicit ev: Model[F]) = new SchemaDef[F] {
-    override val isDefinition: Boolean                                   = true
-    override def fields(name: String, description: Option[String]): Json = ev.jsonSchema
-
+  trait ModelSchemaDef[T] extends SchemaDef[T] {
     override val schemaType: String = "object"
+    val decoder: SchemaDecoder[T]
+  }
+
+  implicit def modelSchemaDef[F](implicit ev: Model[F]) = new ModelSchemaDef[F] {
+    override def fields(name: String, description: Option[String]): Json = ev.internalSchema
+    val decoder                                                          = ev.decoder
   }
 
   trait MinimumDef {
@@ -59,11 +63,13 @@ object schemaImplicits {
 
 case class Field[M: DecodeJson](field: String, description: Option[String] = None)(implicit schemaDef: SchemaDef[M]) {
 
-  val isDefinition = schemaDef.isDefinition
-
   val isRequired = schemaDef.isRequired
 
+  val withDef = schemaDef
+
   def asSchema: (JsonField, Json) = schemaDef.asSchema(field, description)
+
+  def asDefinition: (JsonField, Json) = field := jEmptyObject.->:("$ref" := s"#/definitions/$field")
 
   def apply(c: HCursor) = {
     (c --\ field).as[M]
@@ -88,24 +94,41 @@ case class Model[T](title: String,
     decoder.decoder
   )
 
-  def toDefinition(schemaEncoder: SchemaDecoder[T]): Option[Json] = {
-    val definitions = schemaEncoder.fields.filter(_.isDefinition)
-    if (definitions.isEmpty) None
-    else Some(Json.obj(definitions.map(_.asSchema): _*))
+  val definitions: List[Field[_]] = getFields(decoder)
+
+  private def getFields(schemaDecoder: SchemaDecoder[_]): List[Field[_]] = {
+    schemaDecoder.fields
+      .map(f => (f, f.withDef))
+      .collect {
+        case (f: Field[_], m: ModelSchemaDef[_]) => getFields(m.decoder) :+ f
+      }
+      .flatten
+      .toList
   }
 
-  def jsonSchema =
+  private def properties: Json = {
+    val props = decoder.fields.filterNot(f => definitions.contains(f)).map(_.asSchema) ++ definitions.map(_.asDefinition)
+
+    Json.obj(props: _*)
+  }
+
+  private def required: Json = Json.array(decoder.fields.filter(_.isRequired).map(s => jString(s.field)): _*)
+
+  private[argonaut] def internalSchema = {
     jEmptyObject
       .->:("$schema" := "http://json-schema.org/draft-04/schema#")
       .->:("title" := title)
       .->?:(description.map("description" := _))
       .->:("type" := "object")
-      .->?:(toDefinition(decoder).map("definitions" := _))
-      .->:("properties" := Json.obj(decoder.fields.map(f => {
-        if (f.isDefinition) f.field := jEmptyObject.->:("$ref" := s"#/definitions/${f.field}")
-        else f.asSchema
-      }): _*))
-      .->:("required" := Json.array(decoder.fields.filter(_.isRequired).map(s => jString(s.field)): _*))
+      .->:("properties" := properties)
+      .->:("required" := required)
+  }
+
+  def jsonSchema =
+    internalSchema.->?:(
+      if (definitions.isEmpty) None
+      else Some("definitions" := definitions.foldLeft(jEmptyObject) { case (o, f) => o.->:(f.asSchema) })
+    )
 
   def jsonExample: Option[Json] = example.map(encoder)
 }
