@@ -84,7 +84,7 @@ class Json4SchemaTest extends FunSuite {
       Parse.parse(asJson.toString).right.get.toString == "{\"firstName\":\"John\",\"lastName\":\"Doe\",\"age\":42}")
   }
 
-  test("Composed object") {
+  test("Complex object should flatten definitions") {
     case class Person(name: String, surname: String, birthday: LocalDate, address: Address)
     case class Address(street: String, city: String, state: String, country: String)
 
@@ -193,7 +193,7 @@ class Json4SchemaTest extends FunSuite {
 
   }
 
-  test("oneOf") {
+  test("Object with enum") {
     import schemaImplicits._
 
     case class Person(name: String, gender: String)
