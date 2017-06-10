@@ -67,9 +67,14 @@ case class Field[M: DecodeJson](field: String, description: Option[String] = Non
 
   val withDef = schemaDef
 
-  def asSchema: (JsonField, Json) = schemaDef.asSchema(field, description)
+  /** Returns this field as a part of the schema */
+  def toSchema: (JsonField, Json) = schemaDef.asSchema(field, description)
 
-  def asDefinition: (JsonField, Json) = field := jEmptyObject.->:("$ref" := s"#/definitions/$field")
+  /** Returns this field as a schema property or definition reference */
+  def toProperty: (JsonField, Json) = schemaDef match {
+    case _: ModelSchemaDef[_] => field := jEmptyObject.->:("$ref" := s"#/definitions/$field")
+    case _ => schemaDef.asSchema(field, description)
+  }
 
   def apply(c: HCursor) = {
     (c --\ field).as[M]
@@ -106,12 +111,6 @@ case class Model[T](title: String,
       .toList
   }
 
-  private def properties: Json = {
-    val props = decoder.fields.filterNot(f => definitions.contains(f)).map(_.asSchema) ++ definitions.map(_.asDefinition)
-
-    Json.obj(props: _*)
-  }
-
   private def required: Json = Json.array(decoder.fields.filter(_.isRequired).map(s => jString(s.field)): _*)
 
   private[argonaut] def internalSchema = {
@@ -120,14 +119,14 @@ case class Model[T](title: String,
       .->:("title" := title)
       .->?:(description.map("description" := _))
       .->:("type" := "object")
-      .->:("properties" := properties)
+      .->:("properties" := decoder.fields.foldLeft(jEmptyObject) { case(o, f) => o.->:(f.toProperty)})
       .->:("required" := required)
   }
 
   def jsonSchema =
     internalSchema.->?:(
       if (definitions.isEmpty) None
-      else Some("definitions" := definitions.foldLeft(jEmptyObject) { case (o, f) => o.->:(f.asSchema) })
+      else Some("definitions" := definitions.foldLeft(jEmptyObject) { case (o, f) => o.->:(f.toSchema) })
     )
 
   def jsonExample: Option[Json] = example.map(encoder)
