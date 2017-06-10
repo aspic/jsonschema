@@ -38,10 +38,7 @@ class Json4SchemaTest extends FunSuite {
 
     import schemaImplicits._
 
-    implicit val intSchemaDef = new IntSchemaDef with MinimumDef {
-      override val props        = List() ++ minProps
-      override val minimum: Int = 0
-    }
+    implicit val intSchemaDef = minimumDef(0)
 
     val firstName = Field[String]("firstName")
     val lastName  = Field[String]("lastName")
@@ -133,6 +130,8 @@ class Json4SchemaTest extends FunSuite {
     implicit val addressCodec       = addressModel.codec
     implicit val localDateSchemaDef = new StringSchemaDef[LocalDate] {}
 
+    val address   = Field[Address]("address")
+
     implicit val personModel: Model[Person] = Model(
       "Person",
       Some("Describes a Person"),
@@ -147,7 +146,7 @@ class Json4SchemaTest extends FunSuite {
         val firstName = Field[String]("first_name")
         val lastName  = Field[String]("last_name")
         val birthDay  = Field[LocalDate]("birthday")
-        val address   = Field[Address]("address")
+
         SchemaDecoder(
           c =>
             for {
@@ -216,6 +215,17 @@ class Json4SchemaTest extends FunSuite {
     )
 
     assert(personModel.jsonSchema.toString === "{\"description\":\"Some person\",\"properties\":{\"name\":{\"type\":\"string\"},\"gender\":{\"type\":\"string\",\"enum\":[\"male\",\"female\"]}},\"title\":\"Person\",\"type\":\"object\",\"required\":[\"name\",\"gender\"],\"$schema\":\"http://json-schema.org/draft-04/schema#\"}")
+  }
+
+  test("anyOf") {
+    import schemaImplicits._
+
+    val model = Model[String]("Text", None, None,
+      e => jString(e),
+      SchemaDecoder(_.as[String]), Set(stringSchemaDef)
+    )
+
+    println(model.jsonSchema)
   }
 
 }

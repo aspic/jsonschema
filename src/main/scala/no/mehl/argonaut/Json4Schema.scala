@@ -13,15 +13,14 @@ trait SchemaDef[T] {
   def fields[M: EncodeJson](name: String, description: Option[String], enum: Set[M]) = {
     props.foldLeft(
       jEmptyObject
-        .->?:(description.map("description" := _))
-        .->:("type" := schemaType)) { case (json, jsonField) => json.->:(jsonField) }
+        .->?:(description.map("description" := _))) { case (json, jsonField) => json.->:(jsonField) }
           .->?:(Some(enum).filter(_.nonEmpty).map(e => "enum" := Json.array(e.toList.map(_.asJson) : _*)))
   }
   val isRequired = true
 
   val schemaType: String
 
-  val props: List[(JsonField, Json)] = List()
+  def props: List[(JsonField, Json)] = List("type" := schemaType)
 }
 
 object schemaImplicits {
@@ -46,11 +45,15 @@ object schemaImplicits {
 
   trait MinimumDef {
     val minimum: Int
-    val minProps = List("minimum" := minimum)
+
   }
 
   implicit val intSchemaDef    = new IntSchemaDef            {}
   implicit val stringSchemaDef = new StringSchemaDef[String] {}
+
+  def minimumDef(min: Int) = new IntSchemaDef {
+    override val props = super.props :+ ("minimum" := min)
+  }
 
   implicit def optionSchemaDef[F](implicit ev: SchemaDef[F]) = new SchemaDef[Option[F]] {
     override val props               = ev.props
@@ -75,7 +78,7 @@ case class Field[M: DecodeJson : EncodeJson](field: String, description: Option[
   }
 
   def apply(c: ACursor): DecodeResult[M] = c.as[M].flatMap(f => {
-    if (enum.contains(f)) DecodeResult.ok(f)
+    if (enum.contains(f) || enum.isEmpty) DecodeResult.ok(f)
     else DecodeResult.fail(s"$f not found in $enum", CursorHistory.empty)
   })
   def apply(c: HCursor): DecodeResult[M] = apply(c --\ field)
@@ -89,11 +92,14 @@ trait Json4Schema {
   def jsonSchema: Json
 }
 
-case class Model[T](title: String,
+import scala.reflect.{ClassTag, classTag}
+
+case class Model[T : ClassTag](title: String,
                     description: Option[String] = None,
                     example: Option[T] = None,
                     encoder: T => Json,
-                    decoder: SchemaDecoder[T])
+                    decoder: SchemaDecoder[T],
+                    anyOf: Set[_ <: SchemaDef[_]] = Set())
     extends Json4Schema {
 
   val codec: CodecJson[T] = CodecJson(
@@ -111,16 +117,31 @@ case class Model[T](title: String,
       .toList
   }
 
-  private def required: Json = Json.array(decoder.fields.filter(_.isRequired).map(_.field.asJson): _*)
+  val maybeFields = Some(decoder.fields).filterNot(_.isEmpty)
+
+  val required = maybeFields.map(fields => "required" := Json.array(fields.filter(_.isRequired).map(_.field.asJson): _*))
+  val props = maybeFields.map(fields => "properties" := fields.foldLeft(jEmptyObject) { case (o, f) => o.->:(f.toProperty) })
+  val anyOfProp = Some(anyOf).filterNot(_.isEmpty).map(any => "anyOf" := Json.array(any.toList.flatMap(t => t.props).foldLeft(jEmptyObject) {
+    case(o, p) => o.->:(p)
+  }))
 
   private[argonaut] def internalSchema = {
     jEmptyObject
       .->:("$schema" := "http://json-schema.org/draft-04/schema#")
       .->:("title" := title)
+      .->:("type" := getType)
       .->?:(description.map("description" := _))
-      .->:("type" := "object")
-      .->:("properties" := decoder.fields.foldLeft(jEmptyObject) { case (o, f) => o.->:(f.toProperty) })
-      .->:("required" := required)
+      .->?:(props)
+      .->?:(required)
+      .->?:(anyOfProp)
+  }
+
+  def getType: String = {
+    this match {
+      case f if classTag[T] == classTag[String] => "string"
+      case f if classTag[T] == classTag[Int] => "integer"
+      case _ => "object"
+    }
   }
 
   def jsonSchema =
