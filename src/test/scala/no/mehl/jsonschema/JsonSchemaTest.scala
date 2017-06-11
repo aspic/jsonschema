@@ -6,6 +6,7 @@ import org.scalatest.FunSuite
 
 class JsonSchemaTest extends FunSuite {
 
+  import schemaImplicits._
   import argonaut._
   import Argonaut._
 
@@ -21,9 +22,35 @@ class JsonSchemaTest extends FunSuite {
     assert(exampleJson.decodeOption(decode).get == example)
   }
 
-  test("Conform to basic spec, encodes and decodes") {
-    import schemaImplicits._
+  case class Address(street: String, city: String, state: String, country: String)
 
+  implicit val addressCodec = new FieldCodec[Address] {
+    val street  = field("street", _.street)
+    val city    = field("city", _.city)
+    val state   = field("state", _.state)
+    val country = field("country", _.country)
+
+    override def encode(t: Address): Json = Json.obj(
+      street(t),
+      city(t),
+      state(t),
+      country(t)
+    )
+
+    override def decode(c: HCursor): DecodeResult[Address] =
+      for {
+        street  <- c --\ street
+        city    <- c --\ city
+        state   <- c --\ state
+        country <- c --\ country
+      } yield Address(street, city, state, country)
+
+    override val fields: List[JsonDef[Address, _]] = List(street, city, state, country)
+  }
+
+  implicit val addressSchema = Schema(Some("Address"), Some("Describes an address"), addressCodec)
+
+  test("Conform to basic spec, encodes and decodes") {
     case class PersonObject(firstName: String, lastName: String, age: Option[Int])
 
     implicit val intSchemaDef = minimumDef(0)
@@ -62,12 +89,6 @@ class JsonSchemaTest extends FunSuite {
 
   test("Complex object should flatten definitions") {
     case class Person(name: String, surname: String, birthday: LocalDate, address: Address)
-    case class Address(street: String, city: String, state: String, country: String)
-
-    val exampleAddress = Address("3200 Mount Vernon Memorial Highway", "Mount Vernon", "Virginia", "United States")
-    val examplePerson  = Person("John", "Doe", LocalDate.now(), exampleAddress)
-
-    import schemaImplicits._
 
     implicit val localdateCodec: CodecJson[LocalDate] = CodecJson(
       d => jString(d.toString),
@@ -76,33 +97,6 @@ class JsonSchemaTest extends FunSuite {
           date <- c.as[String]
         } yield LocalDate.parse(date)
     )
-
-    implicit val addressCodec = new FieldCodec[Address] {
-      val street  = field("street", _.street)
-      val city    = field("city", _.city)
-      val state   = field("state", _.state)
-      val country = field("country", _.country)
-
-      override def encode(t: Address): Json = Json.obj(
-        street(t),
-        city(t),
-        state(t),
-        country(t)
-      )
-
-      override def decode(c: HCursor): DecodeResult[Address] =
-        for {
-          street  <- c --\ street
-          city    <- c --\ city
-          state   <- c --\ state
-          country <- c --\ country
-        } yield Address(street, city, state, country)
-
-      override val fields: List[JsonDef[Address, _]] = List(street, city, state, country)
-    }
-
-    implicit val addressSchema = Schema(Some("Address"), Some("Describes an address"), addressCodec)
-
     implicit val localDateSchemaDef = new StringSchemaDef[LocalDate] {}
 
     implicit val personCodec = new FieldCodec[Person] {
@@ -144,8 +138,6 @@ class JsonSchemaTest extends FunSuite {
   }
 
   test("Object with enum") {
-    import schemaImplicits._
-
     case class Person(name: String, gender: String)
 
     val personCodec = new FieldCodec[Person] {
@@ -162,6 +154,26 @@ class JsonSchemaTest extends FunSuite {
 
     val personModel = Schema(Some("Person"), Some("Some person"), personCodec)
     assert(personModel.toSchema === resourceToJson("/enum.schema.json"))
+  }
+
+  test("allOf") {
+
+    case class Addresses(billingAddress: Address, shippingAddress: Address)
+
+    implicit val addressesCodec = new FieldCodec[Addresses] {
+      val billing = field("billing_address", _.billingAddress)
+      val shipping = field("shipping_address", _.billingAddress)
+
+      override def decode(c: HCursor): DecodeResult[Addresses] = for {
+        b <- c --\ billing
+        s <- c --\ shipping
+      } yield(Addresses(b, s))
+
+      override val fields: List[JsonDef[Addresses, _]] = List(billing, shipping)
+    }
+    val model = Schema(None, None, addressesCodec)
+    println(model.toSchema)
+
   }
 
 }

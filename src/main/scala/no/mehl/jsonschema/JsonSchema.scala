@@ -40,11 +40,14 @@ case class JsonDef[Model, Prop: EncodeJson: DecodeJson](field: String, f: Model 
 
   /** Returns this field as a schema property or definition reference */
   def toProperty: (JsonField, Json) = schemaDef match {
-    case _: ModelSchemaDef[_] => field := jEmptyObject.->:("$ref" := s"#/definitions/$field")
+    case m: ModelSchemaDef[_] => field := jEmptyObject.->:("$ref" := s"#/definitions/${m.name}")
     case _                    => toSchema
   }
 
-  def toSchema: (JsonField, Json) = schemaDef.asSchema[Prop](field, description, enum)
+  def toSchema: (JsonField, Json) = schemaDef match {
+    case m: ModelSchemaDef[_] => schemaDef.asSchema[Prop](m.name, description, enum)
+    case _ =>  schemaDef.asSchema[Prop](field, description, enum)
+  }
 
   val withDef = schemaDef
 }
@@ -122,12 +125,14 @@ object schemaImplicits {
 
   trait ModelSchemaDef[T] extends SchemaDef[T] {
     override val schemaType: String = "object"
+    val name: String
     val fieldCodec: FieldCodec[T]
   }
 
   implicit def modelSchemaDef[F](implicit ev: Schema[F]) = new ModelSchemaDef[F] {
     override def fields[F: EncodeJson](name: String, description: Option[String], enum: Set[F]) = ev.internalSchema
     val fieldCodec = ev.fieldCodec
+    override val name: String = ev.title.map(_.toLowerCase).getOrElse("unnamed")
   }
 
   implicit val intSchemaDef    = new IntSchemaDef            {}
