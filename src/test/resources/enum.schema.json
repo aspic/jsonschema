@@ -1,0 +1,16 @@
+{
+  "description": "Some person",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "gender": {
+      "type": "string",
+      "enum": ["male", "female"]
+    }
+  },
+  "title": "Person",
+  "type": "object",
+  "required": ["name", "gender"],
+  "$schema": "http://json-schema.org/draft-04/schema#"
+}

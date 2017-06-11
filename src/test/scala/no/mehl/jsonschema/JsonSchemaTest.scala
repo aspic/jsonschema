@@ -1,10 +1,10 @@
-package no.mehl.argonaut
+package no.mehl.jsonschema
 
 import java.time.LocalDate
 
 import org.scalatest.FunSuite
 
-class Json4SchemaTest extends FunSuite {
+class JsonSchemaTest extends FunSuite {
 
   import argonaut._
   import Argonaut._
@@ -145,34 +145,26 @@ class Json4SchemaTest extends FunSuite {
     assertEncodeDecode(example)
   }
 
-  /**
   test("Object with enum") {
     import schemaImplicits._
 
     case class Person(name: String, gender: String)
 
-    val personModel = Model[Person](
-      "Person",
-      Some("Some person"),
-      None,
-      p => casecodec2(Person.apply, Person.unapply)("name", "gender").Encoder(p), {
-        val name   = Field[String]("name")
-        val gender = Field[String]("gender", None, Set("male", "female"))
-        SchemaDecoder(c =>
-                        for {
-                          name   <- name(c)
-                          gender <- gender(c)
-                        } yield Person(name, gender),
-                      name,
-                      gender)
-      }
-    )
+    val personCodec = new FieldCodec[Person] {
+      val name   = field("name", _.name)
+      val gender = field("gender", _.gender, None, Set("male", "female"))
 
-    assert(
-      personModel.jsonSchema.toString === "{\"description\":\"Some person\",\"properties\":{\"name\":{\"type\":\"string\"},\"gender\":{\"type\":\"string\",\"enum\":[\"male\",\"female\"]}},\"title\":\"Person\",\"type\":\"object\",\"required\":[\"name\",\"gender\"],\"$schema\":\"http://json-schema.org/draft-04/schema#\"}")
+      override def decode(c: HCursor): DecodeResult[Person] = for {
+        n <- c --\ name
+        g <- c --\ gender
+      } yield Person(n, g)
+
+      override val fields: List[JsonDef[Person, _]] = List(name, gender)
+    }
+
+    val personModel = Schema(Some("Person"), Some("Some person"), personCodec)
+    assert(personModel.toSchema === resourceToJson("/enum.schema.json"))
   }
-    */
-
   /**
   test("anyOf") {
     import schemaImplicits._
