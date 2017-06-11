@@ -21,12 +21,10 @@ class JsonSchemaTest extends FunSuite {
     assert(exampleJson.decodeOption(decode).get == example)
   }
 
-  // http://json-schema.org/examples.html
-
-  case class PersonObject(firstName: String, lastName: String, age: Option[Int])
-
   test("Conform to basic spec, encodes and decodes") {
     import schemaImplicits._
+
+    case class PersonObject(firstName: String, lastName: String, age: Option[Int])
 
     implicit val intSchemaDef = minimumDef(0)
 
@@ -165,38 +163,5 @@ class JsonSchemaTest extends FunSuite {
     val personModel = Schema(Some("Person"), Some("Some person"), personCodec)
     assert(personModel.toSchema === resourceToJson("/enum.schema.json"))
   }
-  /**
-  test("anyOf") {
-    import schemaImplicits._
-
-    val model = Model[String]("Text", None, None, e => jString(e), SchemaDecoder(_.as[String]), Set(stringSchemaDef))
-
-    println(model.jsonSchema)
-
-    case class Foo(bas: String, age: Int)
-    val spec = new JsonSpec[Foo] {
-      val name = JsonDef[Foo, String]("name", _.bas, Some("Name"))
-      val age  = JsonDef[Foo, Int]("age", _.age, Some("Age"))
-
-      override def decode(c: HCursor) =
-        for {
-          f <- name.decode(c)
-          a <- age.decode(c)
-        } yield Foo(f, a)
-
-      val fields = List(name, age)
-
-    }
-
-    val modelDef = ModelDef[Foo]("foo", spec)
-
-    val codec = spec.codec
-    val json  = codec.encode(Foo("barbar", 10))
-    assert(codec.decodeJson(json).toOption.get == Foo("barbar", 10))
-    println(spec.toSchema)
-  }
-
-  test("new style") {}
-  */
 
 }
