@@ -2,7 +2,6 @@ package no.mehl.argonaut
 
 import java.time.LocalDate
 
-import argonaut.Json.JsonField
 import org.scalatest.FunSuite
 
 class Json4SchemaTest extends FunSuite {
@@ -10,47 +9,40 @@ class Json4SchemaTest extends FunSuite {
   import argonaut._
   import Argonaut._
 
+  def resourceToJson(path: String): Json = {
+    val is   = scala.io.Source.fromInputStream(getClass.getResourceAsStream(path), "UTF-8")
+    val text = is.mkString
+    is.close()
+    Parse.parse(text).right.get
+  }
+
+  def assertEncodeDecode[T](example: T)(implicit encode: EncodeJson[T], decode: DecodeJson[T]) = {
+    val exampleJson = example.asJson(encode).toString
+    assert(exampleJson.decodeOption(decode).get == example)
+  }
+
   // http://json-schema.org/examples.html
-  val spec = """{
-               |    "$schema":"http://json-schema.org/draft-04/schema#",
-               |    "title": "Person",
-               |    "description": "Describes a Person",
-               |    "type": "object",
-               |    "properties": {
-               |        "firstName": {
-               |            "type": "string"
-               |        },
-               |        "lastName": {
-               |            "type": "string"
-               |        },
-               |        "age": {
-               |            "description": "Age in years",
-               |            "type": "integer",
-               |            "minimum": 0
-               |        }
-               |    },
-               |    "required": ["firstName", "lastName"]
-               |}""".stripMargin
 
   case class PersonObject(firstName: String, lastName: String, age: Option[Int])
 
-  test("Conform to spec, and decode instance") {
-
-    val example = PersonObject("John", "Doe", Some(42))
-
+  test("Conform to basic spec, encodes and decodes") {
     import schemaImplicits._
 
     implicit val intSchemaDef = minimumDef(0)
 
-    val personSpec = new JsonSpec[PersonObject] {
-      override val title       = Some("Person")
-      override val description = Some("Describes a Person")
+    implicit val personCodec = new FieldCodec[PersonObject] {
 
       val firstName = field("firstName", _.firstName)
       val lastName  = field("lastName", _.lastName)
       val age       = field("age", _.age, Some("Age in years"))
 
-      override def decode(c: HCursor) =
+      override def encode(t: PersonObject): Json =
+        jEmptyObject
+          .->:(firstName(t))
+          .->:(lastName(t))
+          .->:(age(t))
+
+      override def decode(c: HCursor): DecodeResult[PersonObject] =
         for {
           f <- c --\ firstName
           l <- c --\ lastName
@@ -60,24 +52,14 @@ class Json4SchemaTest extends FunSuite {
       val fields = List(firstName, lastName, age)
     }
 
-    implicit val personCodec = personSpec.codec
-
-    val someSpec = new JsonSpec[String] {
-      override val fields: List[JsonDef[String, _]] = List()
-
-      override def decode(c: HCursor): DecodeResult[String] = c.as[String]
-    }
-
-    println(someSpec.toSchema)
+    val personSpec = Schema(Some("Person"), None, personCodec)
 
     assert(
-      personSpec.toSchema.pretty(PrettyParams.spaces2) == Parse.parse(spec).right.get.pretty(PrettyParams.spaces2))
-    assert(
-      Parse
-        .parse(example.asJson.toString)
-        .right
-        .get
-        .toString == "{\"firstName\":\"John\",\"lastName\":\"Doe\",\"age\":42}")
+      personSpec.toSchema.pretty(PrettyParams.spaces2) == resourceToJson("/basic.schema.json").pretty(
+        PrettyParams.spaces2))
+
+    val example = PersonObject("John", "Doe", Some(42))
+    assertEncodeDecode(example)
   }
 
   test("Complex object should flatten definitions") {
@@ -97,100 +79,73 @@ class Json4SchemaTest extends FunSuite {
         } yield LocalDate.parse(date)
     )
 
-    implicit val addressModel: Model[Address] = Model(
-      "Address",
-      Some("Describes an address"),
-      Some(exampleAddress),
-      o =>
-        Json.obj(
-          "street" := o.street,
-          "city" := o.city,
-          "state" := o.state,
-          "country" := o.country
-      ), {
-        val street  = Field[String]("street")
-        val city    = Field[String]("city")
-        val state   = Field[String]("state")
-        val country = Field[String]("country")
-        SchemaDecoder(c =>
-                        for {
-                          street  <- street(c)
-                          city    <- city(c)
-                          state   <- state(c)
-                          country <- country(c)
-                        } yield Address(street, city, state, country),
-                      street,
-                      city,
-                      state,
-                      country)
-      }
-    )
+    implicit val addressCodec = new FieldCodec[Address] {
+      val street  = field("street", _.street)
+      val city    = field("city", _.city)
+      val state   = field("state", _.state)
+      val country = field("country", _.country)
 
-    implicit val addressCodec       = addressModel.codec
+      override def encode(t: Address): Json = Json.obj(
+        street(t),
+        city(t),
+        state(t),
+        country(t)
+      )
+
+      override def decode(c: HCursor): DecodeResult[Address] =
+        for {
+          street  <- c --\ street
+          city    <- c --\ city
+          state   <- c --\ state
+          country <- c --\ country
+        } yield Address(street, city, state, country)
+
+      override val fields: List[JsonDef[Address, _]] = List(street, city, state, country)
+    }
+
+    implicit val addressSchema = Schema(Some("Address"), Some("Describes an address"), addressCodec)
+
     implicit val localDateSchemaDef = new StringSchemaDef[LocalDate] {}
 
-    val address = Field[Address]("address")
+    implicit val personCodec = new FieldCodec[Person] {
+      val firstName = field("first_name", _.name)
+      val lastName  = field("last_name", _.surname)
+      val birthDay  = field("birthday", _.birthday)
+      val address   = field("address", _.address)
 
-    implicit val personModel: Model[Person] = Model(
-      "Person",
-      Some("Describes a Person"),
-      Some(examplePerson),
-      o =>
-        Json.obj(
-          "first_name" := o.name,
-          "last_name" := o.surname,
-          "birthday" := o.birthday,
-          "address" := o.address
-      ), {
-        val firstName = Field[String]("first_name")
-        val lastName  = Field[String]("last_name")
-        val birthDay  = Field[LocalDate]("birthday")
+      override def decode(c: HCursor): DecodeResult[Person] =
+        for {
+          f <- c --\ firstName
+          l <- c --\ lastName
+          b <- c --\ birthDay
+          a <- c --\ address
+        } yield Person(f, l, b, a)
 
-        SchemaDecoder(
-          c =>
-            for {
-              firstName <- firstName(c)
-              lastName  <- lastName(c)
-              birthday  <- birthDay(c)
-              address   <- address(c)
-            } yield Person(firstName, lastName, birthday, address),
-          firstName,
-          lastName,
-          birthDay,
-          address
-        )
-      }
-    )
+      override val fields: List[JsonDef[Person, _]] = List(firstName, lastName, birthDay, address)
+    }
 
-    implicit val personCodec = personModel.codec
-    println(personModel.encoder(Person("foo", "bar", LocalDate.now(), exampleAddress)).toString)
+    implicit val personModel = Schema(Some("Person"), Some("Describes a Person"), personCodec)
 
-    println(personModel.jsonSchema)
-    println(examplePerson.asJson)
-    val json = examplePerson.asJson
-    println(json)
+    case class PersonWrapper(p: Person)
+    implicit val personWrapperCodec = new FieldCodec[PersonWrapper] {
+      val person = field("person", _.p)
 
-    println(personModel.codec.decodeJson(json).toOption.get)
-    println(personModel.jsonSchema)
+      override def decode(c: HCursor): DecodeResult[PersonWrapper] =
+        for {
+          p <- c --\ person
+        } yield PersonWrapper(p)
 
-    case class Foo(p: Person)
+      override val fields: List[JsonDef[PersonWrapper, _]] = List(person)
+    }
 
-    val foo = new Model[Foo]("Foo", None, None, e => Json.obj("person" := e.p), {
-      val f = Field[Person]("person")
-      SchemaDecoder(c =>
-                      for {
-                        p <- f(c)
-                      } yield Foo(p),
-                    f)
-    })
+    val personWrapperSchema = Schema(Some("PersonWrapper"), Some("Wraps a person"), personWrapperCodec)
 
-    implicit val fooCodec = foo.codec
-
-    println(foo.jsonSchema)
-    println(Foo(examplePerson).asJson)
-
+    assert(personWrapperSchema.toSchema == resourceToJson("/complex-object.schema.json"))
+    val example = PersonWrapper(Person("John", "Doe", LocalDate.now(), Address("foo", "bar", "bas", "barr")))
+    assertEncodeDecode(example)
   }
 
+  /**
   test("Object with enum") {
     import schemaImplicits._
 
@@ -216,7 +171,9 @@ class Json4SchemaTest extends FunSuite {
     assert(
       personModel.jsonSchema.toString === "{\"description\":\"Some person\",\"properties\":{\"name\":{\"type\":\"string\"},\"gender\":{\"type\":\"string\",\"enum\":[\"male\",\"female\"]}},\"title\":\"Person\",\"type\":\"object\",\"required\":[\"name\",\"gender\"],\"$schema\":\"http://json-schema.org/draft-04/schema#\"}")
   }
+    */
 
+  /**
   test("anyOf") {
     import schemaImplicits._
 
@@ -248,5 +205,6 @@ class Json4SchemaTest extends FunSuite {
   }
 
   test("new style") {}
+  */
 
 }

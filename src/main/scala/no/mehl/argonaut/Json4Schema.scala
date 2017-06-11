@@ -44,12 +44,12 @@ object schemaImplicits {
 
   trait ModelSchemaDef[T] extends SchemaDef[T] {
     override val schemaType: String = "object"
-    val decoder: SchemaDecoder[T]
+    val fieldCodec: FieldCodec[T]
   }
 
-  implicit def modelSchemaDef[F](implicit ev: Model[F]) = new ModelSchemaDef[F] {
+  implicit def modelSchemaDef2[F](implicit ev: Schema[F]) = new ModelSchemaDef[F] {
     override def fields[F: EncodeJson](name: String, description: Option[String], enum: Set[F]) = ev.internalSchema
-    val decoder                                                                                 = ev.decoder
+    val fieldCodec = ev.fieldCodec
   }
 
   trait MinimumDef {
@@ -78,154 +78,75 @@ case class JsonDef[Model, Prop: EncodeJson: DecodeJson](field: String, f: Model 
 
   def toJson(foo: Model): (JsonField, Json) = field := f(foo)
 
+  def apply(model: Model): (JsonField, Json) = field := f(model)
+
   def decode(c: HCursor): DecodeResult[Prop] = decode(c --\ field)
   def decode(c: ACursor): DecodeResult[Prop] = c.as[Prop]
-  def toSchema: (JsonField, Json) =
-    field :=
-      schemaDef.props.foldLeft(
-        jEmptyObject
-          .->?:(description.map("description" := _))
-          .->:("type" := schemaDef.schemaType)) {
-        case (o, p) => o.->:(p)
-      }
-}
-
-trait JsonSpec[T] {
-  val fields: List[JsonDef[T, _]]
-  def title: Option[String]       = None
-  def description: Option[String] = None
-
-  def encode(t: T): Json = Json.obj(fields.map(p => p.toJson(t)): _*)
-  def decode(c: HCursor): DecodeResult[T]
-
-  def codec: CodecJson[T] = CodecJson(
-    encode,
-    decode
-  )
-
-  def asType = {
-    "object"
-  }
-
-  lazy val maybeFields = Some(fields).filterNot(_.isEmpty)
-
-  lazy val properties =
-    maybeFields.map(fields => "properties" := fields.foldLeft(jEmptyObject) { case (o, f) => o.->:(f.toSchema) })
-
-  lazy val required =
-    maybeFields.map(fields => "required" := Json.array(fields.filter(_.isRequired).map(_.field.asJson): _*))
-
-  lazy val toSchema: Json = jEmptyObject
-    .->:("$schema" := "http://json-schema.org/draft-04/schema#")
-    .->?:(title.map("title" := _))
-    .->:("type" := asType)
-    .->?:(description.map("description" := _))
-    .->?:(properties)
-    .->?:(required)
-
-  def field[Prop: EncodeJson: DecodeJson](field: String, f: T => Prop, description: Option[String] = None)(
-      implicit schemaDef: SchemaDef[Prop]) = new JsonDef[T, Prop](field, f, description)
-}
-
-case class ModelDef[T](title: String, t: JsonSpec[T]) {}
-
-case class Field[M: DecodeJson: EncodeJson](field: String,
-                                            description: Option[String] = None,
-                                            enum: Set[M] = Set[M]())(implicit schemaDef: SchemaDef[M]) {
-
-  val isRequired = schemaDef.isRequired
-
-  val withDef = schemaDef
-
-  /** Returns this field as a part of the schema */
-  def toSchema: (JsonField, Json) = schemaDef.asSchema[M](field, description, enum)
 
   /** Returns this field as a schema property or definition reference */
   def toProperty: (JsonField, Json) = schemaDef match {
     case _: ModelSchemaDef[_] => field := jEmptyObject.->:("$ref" := s"#/definitions/$field")
-    case _                    => schemaDef.asSchema(field, description, enum)
+    case _                    => schemaDef.asSchema[Prop](field, description, Set[Prop]())
   }
 
-  def apply(c: ACursor): DecodeResult[M] =
-    c.as[M]
-      .flatMap(f => {
-        if (enum.contains(f) || enum.isEmpty) DecodeResult.ok(f)
-        else DecodeResult.fail(s"$f not found in $enum", CursorHistory.empty)
-      })
-  def apply(c: HCursor): DecodeResult[M] = apply(c --\ field)
+  def toSchema: (JsonField, Json) = schemaDef.asSchema[Prop](field, description, Set[Prop]())
 
-  def apply[T: EncodeJson](t: T) = field := t
+  val withDef = schemaDef
 }
 
-case class SchemaDecoder[T](decoder: HCursor => DecodeResult[T], fields: Field[_]*)
+trait FieldCodec[Model] extends EncodeJson[Model] with DecodeJson[Model] {
 
-trait Json4Schema {
-  def jsonSchema: Json
+  /** An ad-hoc encoder for a json object, override for more specialization */
+  def encode(t: Model): Json = fields.foldLeft(jEmptyObject) {
+    case(o, p) => o.->:(p.toJson(t))
+  }
+
+  def decode(c: HCursor): DecodeResult[Model]
+
+  val fields: List[JsonDef[Model, _]]
+
+  def field[Prop: EncodeJson: DecodeJson](field: String, f: Model => Prop, description: Option[String] = None)(
+    implicit schemaDef: SchemaDef[Prop]) = new JsonDef[Model, Prop](field, f, description)
 }
 
-import scala.reflect.{ClassTag, classTag}
+case class Schema[T : ClassTag](title: Option[String], description: Option[String], fieldCodec: FieldCodec[T]) {
 
-case class Model[T: ClassTag](title: String,
-                              description: Option[String] = None,
-                              example: Option[T] = None,
-                              encoder: T => Json,
-                              decoder: SchemaDecoder[T],
-                              anyOf: Set[_ <: SchemaDef[_]] = Set())
-    extends Json4Schema {
+  def codec: CodecJson[T] = CodecJson(fieldCodec.encode, fieldCodec.decode)
 
-  val codec: CodecJson[T] = CodecJson(
-    encoder,
-    decoder.decoder
-  )
+  lazy val fields = Some(fieldCodec.fields).filterNot(_.isEmpty)
 
-  private def getFields(schemaDecoder: SchemaDecoder[_]): List[Field[_]] = {
+  lazy val properties =
+    fields.map(fields => "properties" := fields.foldLeft(jEmptyObject) { case (o, f) => o.->:(f.toProperty) })
+
+  lazy val required =
+    fields.map(fields => "required" := Json.array(fields.filter(_.isRequired).map(_.field.asJson): _*))
+
+  lazy val internalSchema: Json = jEmptyObject
+    .->:("$schema" := "http://json-schema.org/draft-04/schema#")
+    .->?:(required)
+    .->?:(title.map("title" := _))
+    .->:("type" := asType)
+    .->?:(description.map("description" := _))
+    .->?:(properties)
+
+  lazy val toSchema: Json = internalSchema
+    .->?:(Some(getFields(fieldCodec))
+      .filter(_.nonEmpty)
+      .map(defs => "definitions" := defs.foldLeft(jEmptyObject) { case (o, f) => o.->:(f.toSchema) }))
+
+  def asType = this match {
+    case _ if classTag[T] == classTag[String] => "string"
+    case _ if classTag[T] == classTag[Int] => "integer"
+    case _ => "object"
+  }
+
+  /** Gets all complex fields which in turn are made into references */
+  private def getFields(schemaDecoder: FieldCodec[T]): List[JsonDef[T, _]] = {
     schemaDecoder.fields
       .map(f => (f, f.withDef))
       .collect {
-        case (f: Field[_], m: ModelSchemaDef[_]) => getFields(m.decoder) :+ f
+        case (f: JsonDef[T, _], m: ModelSchemaDef[T]) => getFields(m.fieldCodec) :+ f
       }
       .flatten
-      .toList
   }
-
-  val maybeFields = Some(decoder.fields).filterNot(_.isEmpty)
-
-  val required =
-    maybeFields.map(fields => "required" := Json.array(fields.filter(_.isRequired).map(_.field.asJson): _*))
-  val props =
-    maybeFields.map(fields => "properties" := fields.foldLeft(jEmptyObject) { case (o, f) => o.->:(f.toProperty) })
-  val anyOfProp = Some(anyOf)
-    .filterNot(_.isEmpty)
-    .map(any =>
-      "anyOf" := Json.array(any.toList.flatMap(t => t.props).foldLeft(jEmptyObject) {
-        case (o, p) => o.->:(p)
-      }))
-
-  private[argonaut] def internalSchema = {
-    jEmptyObject
-      .->:("$schema" := "http://json-schema.org/draft-04/schema#")
-      .->:("title" := title)
-      .->:("type" := getType)
-      .->?:(description.map("description" := _))
-      .->?:(props)
-      .->?:(required)
-      .->?:(anyOfProp)
-  }
-
-  def getType: String = {
-    this match {
-      case f if classTag[T] == classTag[String] => "string"
-      case f if classTag[T] == classTag[Int]    => "integer"
-      case _                                    => "object"
-    }
-  }
-
-  def jsonSchema =
-    internalSchema.->?:(
-      Some(getFields(decoder))
-        .filter(_.nonEmpty)
-        .map(defs => "definitions" := defs.foldLeft(jEmptyObject) { case (o, f) => o.->:(f.toSchema) })
-    )
-
-  def jsonExample: Option[Json] = example.map(encoder)
 }

@@ -1,0 +1,56 @@
+{
+  "description": "Wraps a person",
+  "properties": {
+    "person": {
+      "$ref": "#/definitions/person"
+    }
+  },
+  "definitions": {
+    "address": {
+      "description": "Describes an address",
+      "properties": {
+        "street": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        }
+      },
+      "title": "Address",
+      "type": "object",
+      "required": ["street", "city", "state", "country"],
+      "$schema": "http://json-schema.org/draft-04/schema#"
+    },
+    "person": {
+      "description": "Describes a Person",
+      "properties": {
+        "first_name": {
+          "type": "string"
+        },
+        "last_name": {
+          "type": "string"
+        },
+        "birthday": {
+          "type": "string"
+        },
+        "address": {
+          "$ref": "#/definitions/address"
+        }
+      },
+      "title": "Person",
+      "type": "object",
+      "required": ["first_name", "last_name", "birthday", "address"],
+      "$schema": "http://json-schema.org/draft-04/schema#"
+    }
+  },
+  "title": "PersonWrapper",
+  "type": "object",
+  "required": ["person"],
+  "$schema": "http://json-schema.org/draft-04/schema#"
+}
