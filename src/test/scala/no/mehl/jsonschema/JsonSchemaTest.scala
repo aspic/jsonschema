@@ -156,13 +156,36 @@ class JsonSchemaTest extends FunSuite {
     assert(personModel.toSchema === resourceToJson("/enum.schema.json"))
   }
 
+  test("Object with list") {
+    case class SomeObject(tags: List[String])
+
+    implicit val objectCodec = new FieldCodec[SomeObject] {
+
+      val tags = field("tags", _.tags)
+
+      override def decode(c: HCursor): DecodeResult[SomeObject] = for {
+        t <- c --\ tags
+      } yield SomeObject(t)
+
+      override val fields: List[JsonDef[SomeObject, _]] = List(tags)
+    }
+    val objectModel = Schema(objectCodec)
+    assert(objectModel.toSchema === resourceToJson("/tags.schema.json"))
+    assertEncodeDecode(SomeObject(List("foo", "bar")))
+  }
+
+  /**
   test("allOf") {
 
     case class Addresses(billingAddress: Address, shippingAddress: Address)
+    case class AddressType(asString: String)
+    implicit val foo = new SchemaDef[AddressType] {
+
+    }
 
     implicit val addressesCodec = new FieldCodec[Addresses] {
       val billing = field("billing_address", _.billingAddress)
-      val shipping = field("shipping_address", _.billingAddress)
+      val shipping = field("shipping_address", _.billingAddress, None, Set(), Set(modelSchemaDef(addressSchema)))
 
       override def decode(c: HCursor): DecodeResult[Addresses] = for {
         b <- c --\ billing
@@ -175,5 +198,6 @@ class JsonSchemaTest extends FunSuite {
     println(model.toSchema)
 
   }
+    */
 
 }

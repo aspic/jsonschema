@@ -23,11 +23,18 @@ trait SchemaDef[T] {
 
   val schemaType: String
 
+  def jsonProps: Json = props.foldLeft(jEmptyObject) {
+    case (o, p) => o.->:(p)
+  }
+
   def props: List[(JsonField, Json)] = List("type" := schemaType)
 }
 
-case class JsonDef[Model, Prop: EncodeJson: DecodeJson](field: String, f: Model => Prop, description: Option[String], enum: Set[Prop])(
-    implicit schemaDef: SchemaDef[Prop]) {
+case class JsonDef[Model, Prop: EncodeJson: DecodeJson](field: String,
+                                                        f: Model => Prop,
+                                                        description: Option[String],
+                                                        enum: Set[Prop],
+                                                        allOf: Set[SchemaDef[_]])(implicit schemaDef: SchemaDef[Prop]) {
 
   def isRequired = schemaDef.isRequired
 
@@ -40,13 +47,15 @@ case class JsonDef[Model, Prop: EncodeJson: DecodeJson](field: String, f: Model 
 
   /** Returns this field as a schema property or definition reference */
   def toProperty: (JsonField, Json) = schemaDef match {
-    case m: ModelSchemaDef[_] => field := jEmptyObject.->:("$ref" := s"#/definitions/${m.name}")
+    case m: ModelSchemaDef[_] => field := jEmptyObject
+      .->:("$ref" := s"#/definitions/${m.name}")
+        .->?:(Some(allOf.toList).filterNot(_.isEmpty).map(all => "allOf" := Json.array(all.map(f => f.asSchema(field, description, enum)._2): _*)))
     case _                    => toSchema
   }
 
   def toSchema: (JsonField, Json) = schemaDef match {
     case m: ModelSchemaDef[_] => schemaDef.asSchema[Prop](m.name, description, enum)
-    case _ =>  schemaDef.asSchema[Prop](field, description, enum)
+    case _                    => schemaDef.asSchema[Prop](field, description, enum)
   }
 
   val withDef = schemaDef
@@ -56,18 +65,22 @@ trait FieldCodec[Model] extends EncodeJson[Model] with DecodeJson[Model] {
 
   /** An ad-hoc encoder for a json object, override for more specialization */
   def encode(t: Model): Json = fields.foldLeft(jEmptyObject) {
-    case(o, p) => o.->:(p.toJson(t))
+    case (o, p) => o.->:(p.toJson(t))
   }
 
   def decode(c: HCursor): DecodeResult[Model]
 
   val fields: List[JsonDef[Model, _]]
 
-  def field[Prop: EncodeJson: DecodeJson](field: String, f: Model => Prop, description: Option[String] = None, enum: Set[Prop] = Set[Prop]())(
-    implicit schemaDef: SchemaDef[Prop]) = new JsonDef[Model, Prop](field, f, description, enum)
+  def field[Prop: EncodeJson: DecodeJson](field: String,
+                                          f: Model => Prop,
+                                          description: Option[String] = None,
+                                          enum: Set[Prop] = Set[Prop](),
+                                          allOf: Set[SchemaDef[_]] = Set())(implicit schemaDef: SchemaDef[Prop]) =
+    new JsonDef[Model, Prop](field, f, description, enum, allOf)
 }
 
-case class Schema[T : ClassTag](title: Option[String], description: Option[String], fieldCodec: FieldCodec[T]) {
+case class Schema[T: ClassTag](title: Option[String], description: Option[String], fieldCodec: FieldCodec[T]) {
 
   def codec: CodecJson[T] = CodecJson(fieldCodec.encode, fieldCodec.decode)
 
@@ -88,14 +101,15 @@ case class Schema[T : ClassTag](title: Option[String], description: Option[Strin
     .->?:(properties)
 
   lazy val toSchema: Json = internalSchema
-    .->?:(Some(getFields(fieldCodec))
-      .filter(_.nonEmpty)
-      .map(defs => "definitions" := defs.foldLeft(jEmptyObject) { case (o, f) => o.->:(f.toSchema) }))
+    .->?:(
+      Some(getFields(fieldCodec))
+        .filter(_.nonEmpty)
+        .map(defs => "definitions" := defs.foldLeft(jEmptyObject) { case (o, f) => o.->:(f.toSchema) }))
 
   def asType = this match {
     case _ if classTag[T] == classTag[String] => "string"
-    case _ if classTag[T] == classTag[Int] => "integer"
-    case _ => "object"
+    case _ if classTag[T] == classTag[Int]    => "integer"
+    case _                                    => "object"
   }
 
   /** Gets all complex fields which in turn are made into references */
@@ -107,6 +121,10 @@ case class Schema[T : ClassTag](title: Option[String], description: Option[Strin
       }
       .flatten
   }
+}
+
+object Schema {
+  def apply[T : ClassTag](f: FieldCodec[T]): Schema[T] = Schema(None, None, f)
 }
 
 object schemaImplicits {
@@ -131,8 +149,14 @@ object schemaImplicits {
 
   implicit def modelSchemaDef[F](implicit ev: Schema[F]) = new ModelSchemaDef[F] {
     override def fields[F: EncodeJson](name: String, description: Option[String], enum: Set[F]) = ev.internalSchema
-    val fieldCodec = ev.fieldCodec
-    override val name: String = ev.title.map(_.toLowerCase).getOrElse("unnamed")
+    val fieldCodec                                                                              = ev.fieldCodec
+    override val name: String                                                                   = ev.title.map(_.toLowerCase).getOrElse("unnamed")
+  }
+
+  implicit def listSchemaDef[F](implicit ev: SchemaDef[F]) = new SchemaDef[List[F]] {
+    override val schemaType: String = "array"
+
+    override val props = super.props :+ ("items" := ev.jsonProps)
   }
 
   implicit val intSchemaDef    = new IntSchemaDef            {}
