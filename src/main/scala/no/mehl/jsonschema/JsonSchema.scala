@@ -13,10 +13,8 @@ trait SchemaDef[T] {
   }
 
   def fields[M: EncodeJson](name: String, description: Option[String], enum: Set[M]) = {
-    props
-      .foldLeft(
-        jEmptyObject
-          .->?:(description.map("description" := _))) { case (json, jsonField) => json.->:(jsonField) }
+    jsonProps
+      .->?:(description.map("description" := _))
       .->?:(Some(enum).filter(_.nonEmpty).map(e => "enum" := Json.array(e.toList.map(_.asJson): _*)))
   }
   val isRequired = true
