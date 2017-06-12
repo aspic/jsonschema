@@ -13,7 +13,7 @@ trait SchemaDef[T] {
   }
 
   def fields[M: EncodeJson](name: String, description: Option[String], enum: Set[M]) = {
-    jsonProps
+    props
       .->?:(description.map("description" := _))
       .->?:(Some(enum).filter(_.nonEmpty).map(e => "enum" := Json.array(e.toList.map(_.asJson): _*)))
   }
@@ -21,11 +21,7 @@ trait SchemaDef[T] {
 
   val schemaType: String
 
-  def jsonProps: Json = props.foldLeft(jEmptyObject) {
-    case (o, p) => o.->:(p)
-  }
-
-  def props: List[(JsonField, Json)] = List("type" := schemaType)
+  def props: Json = jEmptyObject.->:("type" := schemaType)
 }
 
 case class JsonDef[Model, Prop: EncodeJson: DecodeJson](field: String,
@@ -154,14 +150,14 @@ object schemaImplicits {
   implicit def listSchemaDef[F](implicit ev: SchemaDef[F]) = new SchemaDef[List[F]] {
     override val schemaType: String = "array"
 
-    override val props = super.props :+ ("items" := ev.jsonProps)
+    override val props = super.props.->:("items" := ev.props)
   }
 
   implicit val intSchemaDef    = new IntSchemaDef            {}
   implicit val stringSchemaDef = new StringSchemaDef[String] {}
 
   def minimumDef(min: Int) = new IntSchemaDef {
-    override val props = super.props :+ ("minimum" := min)
+    override val props = super.props.->:("minimum" := min)
   }
 
   implicit def optionSchemaDef[F](implicit ev: SchemaDef[F]) = new SchemaDef[Option[F]] {
